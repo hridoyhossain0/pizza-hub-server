@@ -2,7 +2,6 @@ import type { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import Stripe from "stripe";
 
-import { auth, normalizeUserRole, toRequestHeaders } from "./auth.ts";
 import {
   idFilter,
   menuItemsCollection,
@@ -207,46 +206,31 @@ function customerId(session: Stripe.Checkout.Session) {
 /**
  * POST /api/payments/checkout
  *
- * Creates a Stripe Checkout Session for the signed-in vendor. The vendor id
- * always comes from the verified session cookie — never from the request body,
- * so one vendor cannot pay for, or upgrade, another vendor.
+ * Runs behind `requireAuth` and `requireRole("vendor")`. The vendor id always
+ * comes from the verified JWT — never from the request body — so one vendor
+ * cannot pay for, or upgrade, another vendor.
  */
 export async function checkoutHandler(request: Request, response: Response) {
   try {
-    const session = await auth.api.getSession({
-      headers: toRequestHeaders(request),
-    });
+    const auth = request.auth;
 
-    if (!session?.user) {
+    if (!auth) {
       response
         .status(401)
         .json({ message: "Please sign in to upgrade your subscription." });
       return;
     }
 
-    const user = session.user as typeof session.user & {
-      role?: unknown;
-      blocked?: unknown;
-    };
-
-    if (normalizeUserRole(user.role) !== "vendor") {
+    if (auth.role !== "vendor") {
       response.status(403).json({
         message: "Only vendor accounts can purchase a Premium subscription.",
       });
       return;
     }
 
-    if (user.blocked === true) {
-      response.status(403).json({
-        message:
-          "Your account has been blocked by an administrator and cannot start a payment.",
-      });
-      return;
-    }
-
     // Lazy expiry lets an overdue vendor renew instead of being treated as
     // already Premium.
-    const profile = await expireVendorSubscription(user.id);
+    const profile = await expireVendorSubscription(auth.id);
 
     if (!profile) {
       response.status(400).json({
@@ -297,8 +281,8 @@ export async function checkoutHandler(request: Request, response: Response) {
 
     const checkout = await stripe.checkout.sessions.create({
       mode: "payment",
-      client_reference_id: user.id,
-      customer_email: user.email,
+      client_reference_id: auth.id,
+      customer_email: auth.email,
       line_items: [
         {
           quantity: 1,
@@ -314,12 +298,12 @@ export async function checkoutHandler(request: Request, response: Response) {
         },
       ],
       metadata: {
-        vendorId: user.id,
+        vendorId: auth.id,
         plan: "premium",
       },
       payment_intent_data: {
         metadata: {
-          vendorId: user.id,
+          vendorId: auth.id,
           plan: "premium",
         },
       },
@@ -341,7 +325,7 @@ export async function checkoutHandler(request: Request, response: Response) {
       // Only the verified webhook may mark it paid.
       await transactionsCollection.insertOne({
         _id: new ObjectId(),
-        vendorId: user.id,
+        vendorId: auth.id,
         vendorName: profile.restaurantName,
         plan: "premium",
         amount: price.unitAmount / 100,

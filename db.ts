@@ -51,10 +51,45 @@ export interface VendorProfileDocument {
   updatedAt: Date;
 }
 
+export type MenuStatus = "pending" | "approved" | "rejected" | "inactive";
+export type OrderStatus = "pending" | "accepted" | "rejected" | "cancelled";
+
 export interface MenuItemDocument {
   _id: ObjectId;
   vendorId: EntityId;
+  vendorName: string;
+  vendorImage?: string;
+  vendorLocation?: string;
+  name: string;
+  category: string;
+  description: string;
+  price: number;
+  location: string;
+  image: string;
+  status: MenuStatus;
+  isActive: boolean;
   premium: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OrderDocument {
+  _id: ObjectId;
+  customerId: EntityId;
+  customerName: string;
+  customerEmail: string;
+  vendorId: EntityId;
+  vendorName: string;
+  itemId: string;
+  itemName: string;
+  itemImage: string;
+  unitPrice: number;
+  quantity: number;
+  deliveryDate: string;
+  deliveryAddress: string;
+  message: string;
+  status: OrderStatus;
+  createdAt: Date;
   updatedAt: Date;
 }
 
@@ -101,6 +136,8 @@ export const vendorProfilesCollection: Collection<VendorProfileDocument> =
   db.collection("vendorProfiles");
 export const menuItemsCollection: Collection<MenuItemDocument> =
   db.collection("menuItems");
+export const ordersCollection: Collection<OrderDocument> =
+  db.collection("orders");
 export const transactionsCollection: Collection<TransactionDocument> =
   db.collection("transactions");
 export const imagesCollection: Collection<ImageDocument> =
