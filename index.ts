@@ -4,6 +4,7 @@ import "dotenv/config";
 
 import { connectToMongoDB } from "./db.ts";
 import { checkoutHandler, webhookHandler } from "./payments.ts";
+import { imageHandler, uploadImageHandler } from "./uploads.ts";
 
 const app = express();
 
@@ -39,7 +40,15 @@ app.post(
   webhookHandler,
 );
 
-app.use(express.json());
+// Base64 image uploads need a larger JSON limit than normal requests.
+app.post(
+  "/api/uploads",
+  express.json({ limit: "8mb" }),
+  uploadImageHandler,
+);
+app.get("/api/images/:id", imageHandler);
+
+app.use(express.json({ limit: "1mb" }));
 
 app.post("/api/payments/checkout", checkoutHandler);
 

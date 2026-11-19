@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import Stripe from "stripe";
 
-import { auth, normalizeUserRole } from "./auth.ts";
+import { auth, normalizeUserRole, toRequestHeaders } from "./auth.ts";
 import {
   idFilter,
   menuItemsCollection,
@@ -188,22 +188,6 @@ async function activateVendorPremium({
   return profile;
 }
 
-function toHeaders(request: Request): Headers {
-  const headers = new Headers();
-
-  for (const [key, value] of Object.entries(request.headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        headers.append(key, item);
-      }
-    } else if (typeof value === "string") {
-      headers.set(key, value);
-    }
-  }
-
-  return headers;
-}
-
 function paymentIntentId(session: Stripe.Checkout.Session) {
   if (typeof session.payment_intent === "string") {
     return session.payment_intent;
@@ -230,7 +214,7 @@ function customerId(session: Stripe.Checkout.Session) {
 export async function checkoutHandler(request: Request, response: Response) {
   try {
     const session = await auth.api.getSession({
-      headers: toHeaders(request),
+      headers: toRequestHeaders(request),
     });
 
     if (!session?.user) {

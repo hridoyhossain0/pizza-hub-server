@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
+import type { Request } from "express";
 
 import { db, mongoClient } from "./db.ts";
 
@@ -46,6 +47,23 @@ export const auth = betterAuth({
   },
   trustedOrigins: [process.env.APP_URL ?? "http://localhost:3000"],
 });
+
+/** Converts Express request headers into the `Headers` Better Auth expects. */
+export function toRequestHeaders(request: Request): Headers {
+  const headers = new Headers();
+
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        headers.append(key, item);
+      }
+    } else if (typeof value === "string") {
+      headers.set(key, value);
+    }
+  }
+
+  return headers;
+}
 
 export type UserRole = "customer" | "vendor" | "admin";
 

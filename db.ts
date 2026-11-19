@@ -1,5 +1,10 @@
 import "dotenv/config";
-import { MongoClient, ObjectId, type Collection } from "mongodb";
+import {
+  Binary,
+  MongoClient,
+  ObjectId,
+  type Collection,
+} from "mongodb";
 
 export type SubscriptionPlan = "free" | "premium";
 export type SubscriptionStatus = "active" | "cancelled" | "expired";
@@ -53,6 +58,16 @@ export interface MenuItemDocument {
   updatedAt: Date;
 }
 
+export interface ImageDocument {
+  _id: ObjectId;
+  filename: string;
+  contentType: string;
+  size: number;
+  data: Binary;
+  uploadedBy: EntityId;
+  createdAt: Date;
+}
+
 export interface TransactionDocument {
   _id: ObjectId;
   vendorId: EntityId;
@@ -88,6 +103,8 @@ export const menuItemsCollection: Collection<MenuItemDocument> =
   db.collection("menuItems");
 export const transactionsCollection: Collection<TransactionDocument> =
   db.collection("transactions");
+export const imagesCollection: Collection<ImageDocument> =
+  db.collection("images");
 
 export async function connectToMongoDB() {
   await mongoClient.connect();
