@@ -1,14 +1,53 @@
-import express, { type Request, type Response } from 'express'
-import cors from 'cors'
-import 'dotenv/config'
-const app = express()
+import express, { type Request, type Response } from "express";
+import cors from "cors";
+import "dotenv/config";
 
-app.use(express.json())
-app.use(cors())
+import { connectToMongoDB } from "./db.ts";
+import { checkoutHandler, webhookHandler } from "./payments.ts";
 
-app.get('/', (req: Request, res: Response) => {
-  res.send('Hel World!')
-})
-app.listen(7000, () => {
-  console.log('Server is running on port 7000')
-})
+const app = express();
+
+const frontendUrl = (
+  process.env.APP_URL?.trim() || "http://localhost:3000"
+).replace(/\/$/, "");
+
+const allowedOrigins = Array.from(
+  new Set([frontendUrl, "http://localhost:3000", "http://127.0.0.1:3000"]),
+);
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+  }),
+);
+
+app.get("/", (_request: Request, response: Response) => {
+  response.json({ status: "ok", service: "pizza-hub-server" });
+});
+
+app.get("/health", (_request: Request, response: Response) => {
+  response.json({ status: "ok" });
+});
+
+// Stripe needs the raw body for signature verification, so this route is
+// registered before the JSON body parser.
+app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  webhookHandler,
+);
+
+app.use(express.json());
+
+app.post("/api/payments/checkout", checkoutHandler);
+
+const port = Number(process.env.PORT ?? 7000);
+
+await connectToMongoDB();
+
+app.listen(port, () => {
+  console.log(`PizzaHub API listening on http://localhost:${port}`);
+  console.log(`CORS origin: ${frontendUrl}`);
+});
