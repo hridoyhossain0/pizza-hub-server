@@ -5,9 +5,9 @@ and verification, customer orders, Stripe Premium subscriptions, and menu/profil
 image storage. Better Auth owns identity; this service never trusts a user id or
 role supplied by the browser.
 
-- **Frontend repository:** _add the GitHub URL here_
-- **Live API URL:** _add the deployed API URL here_
-- **Live site:** _add the deployed frontend URL here_
+- **Runtime:** Node.js on a long-running Express-capable host
+- **Live API URL:** add after deployment
+- **Frontend URL:** add after deployment
 
 ## Endpoints
 
@@ -64,12 +64,15 @@ deployed API origin so stored URLs resolve in production.
 
 ## Environment variables
 
-Create `.env` locally; it is git-ignored.
+Create `.env` locally; it is git-ignored. Configure the same database,
+Better Auth secret, and Google OAuth credentials in both services.
 
 ```bash
 MONGODB_URL=mongodb+srv://...
 BETTER_AUTH_SECRET=<same value as the frontend>
 BETTER_AUTH_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=<same Google OAuth client id as the frontend>
+GOOGLE_CLIENT_SECRET=<same Google OAuth client secret as the frontend>
 APP_URL=http://localhost:3000
 PORT=7000
 PUBLIC_API_URL=http://localhost:7000
@@ -81,6 +84,12 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_CURRENCY=bdt
 STRIPE_UNIT_AMOUNT=49900
 ```
+
+`PORT`, `PUBLIC_API_URL`, `JWT_TTL_SECONDS`, `STRIPE_CURRENCY`, and
+`STRIPE_UNIT_AMOUNT` have defaults. `APP_URL` must be the exact deployed
+frontend origin for CORS and Checkout redirects. `PUBLIC_API_URL` must be the
+public API origin so uploaded images keep working after deployment. Never commit
+the actual values.
 
 ## Running locally
 
@@ -97,6 +106,28 @@ For Stripe webhooks during development:
 ```bash
 stripe listen --forward-to localhost:7000/api/payments/webhook
 ```
+
+## Production deployment
+
+1. Create the Atlas database and configure network access for the API host and
+   Vercel. Set the same `MONGODB_URL` for the frontend and API.
+2. Deploy this folder to a Node.js host that supports a continuously running
+   Express process. Use `npm start`; the service listens on the host-provided
+   `PORT`.
+3. Set `APP_URL` to the Vercel origin and `PUBLIC_API_URL` to this API's public
+   origin. Add the production frontend origin to the Express CORS allow-list
+   through `APP_URL`.
+4. Add the Google OAuth redirect URI
+   `https://<frontend-domain>/api/auth/callback/google` in Google Cloud and set
+   the same OAuth client credentials in both deployments.
+5. Register `https://<api-domain>/api/payments/webhook` in Stripe for
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, and `checkout.session.expired`.
+   Store Stripe's signing secret as `STRIPE_WEBHOOK_SECRET`; do not expose it to
+   the frontend.
+6. Verify `/health`, auth redirects, API CORS from the deployed site, direct
+   reloads of Next.js routes, image URLs, and Stripe test-mode subscription
+   activation before switching to live payment keys.
 
 ## Project structure
 
@@ -118,3 +149,5 @@ db.ts         MongoDB client, collections and document types
 - Stripe webhooks are verified with the raw body before any database write.
 - Only the webhook can activate Premium.
 - All order, payment and upload routes reject unauthenticated requests.
+- The frontend obtains short-lived API tokens from the Better Auth session; the
+  Express API remains the owner of the order, upload, and payment endpoints.
