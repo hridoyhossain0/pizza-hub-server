@@ -26,10 +26,10 @@ export async function tokenHandler(request: Request, response: Response) {
 
     const user = session.user as typeof session.user & {
       role?: unknown;
-      blocked?: unknown;
+      isBlocked?: unknown;
     };
 
-    if (user.blocked === true) {
+    if (user.isBlocked === true) {
       response.status(403).json({
         message: "Blocked accounts cannot request an access token.",
       });

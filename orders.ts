@@ -52,7 +52,6 @@ export async function createOrderHandler(request: Request, response: Response) {
   const item = await menuItemsCollection.findOne({
     _id: new ObjectId(itemId),
     status: "approved",
-    isActive: true,
   });
 
   if (!item) {
@@ -141,8 +140,8 @@ export async function createOrderHandler(request: Request, response: Response) {
       vendorId: item.vendorId.toString(),
       vendorName: item.vendorName,
       itemId: item._id.toString(),
-      itemName: item.name,
-      itemImage: item.image,
+      itemName: item.itemName,
+      itemImage: item.images?.[0] ?? "",
       unitPrice: item.price,
       quantity,
       deliveryDate,

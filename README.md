@@ -20,8 +20,7 @@ role supplied by the browser.
 | `POST` | `/api/orders` | JWT + `customer` | place an order |
 | `POST` | `/api/payments/checkout` | JWT + `vendor` | create a Stripe Checkout Session |
 | `POST` | `/api/payments/webhook` | Stripe signature | activate Premium after payment |
-| `POST` | `/api/uploads` | authenticated | store an image in MongoDB |
-| `GET` | `/api/images/:id` | public | serve a stored image |
+| `POST` | `/api/uploads` | authenticated | upload an image to ImgBB |
 
 ## JWT flow
 
@@ -57,10 +56,10 @@ Premium is a one-time Stripe Checkout payment for a 30-day period.
 
 ## Image uploads
 
-`POST /api/uploads` accepts a base64 data URL (max 8 MB by default), validates the
-MIME type and stores the bytes in the `images` collection. `GET /api/images/:id`
-streams them back with long-lived cache headers. Set `PUBLIC_API_URL` to the
-deployed API origin so stored URLs resolve in production.
+`POST /api/uploads` accepts a base64 data URL (max 5 MB), validates the MIME
+type and forwards it to ImgBB using `IMGBB_API_KEY`. The hosted ImgBB URL is
+stored in the relevant MongoDB menu/profile document. Set `PUBLIC_API_URL` to
+the deployed API origin for provider-independent frontend/API configuration.
 
 ## Environment variables
 
@@ -78,7 +77,7 @@ PORT=7000
 PUBLIC_API_URL=http://localhost:7000
 JWT_SECRET=<at least 16 random characters>
 JWT_TTL_SECONDS=3600
-
+IMGBB_API_KEY=<ImgBB API key>
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_CURRENCY=bdt

@@ -126,7 +126,7 @@ export async function requireAuth(
   try {
     const user = await usersCollection.findOne(
       { _id: idFilter(payload.sub) },
-      { projection: { name: 1, email: 1, role: 1, blocked: 1 } },
+      { projection: { name: 1, email: 1, role: 1, isBlocked: 1 } },
     );
 
     if (!user) {
@@ -136,7 +136,7 @@ export async function requireAuth(
       return;
     }
 
-    if (user.blocked === true) {
+    if (user.isBlocked === true) {
       response.status(403).json({
         message:
           "Your account has been blocked by an administrator and cannot use this feature.",

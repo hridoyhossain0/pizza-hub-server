@@ -7,12 +7,26 @@ import { db, mongoClient } from "./db.ts";
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
+const frontendUrl = (
+  process.env.BETTER_AUTH_URL?.trim() ||
+  process.env.APP_URL?.trim() ||
+  "http://localhost:3000"
+).replace(/\/$/, "");
+
+const trustedOrigins = Array.from(
+  new Set([
+    frontendUrl,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ]),
+);
+
 /**
  * Same auth instance as the Next.js app (same database and secret), so the
  * Express API can validate the session cookie set by Better Auth.
  */
 export const auth = betterAuth({
-  baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+  baseURL: frontendUrl,
   secret: process.env.BETTER_AUTH_SECRET,
   database: mongodbAdapter(db, {
     client: mongoClient,
@@ -37,15 +51,31 @@ export const auth = betterAuth({
         defaultValue: "customer",
         input: false,
       },
-      blocked: {
+      isBlocked: {
         type: "boolean",
         required: false,
         defaultValue: false,
         input: false,
       },
+      subscriptionPlan: {
+        type: "string",
+        required: false,
+        defaultValue: "free",
+        input: false,
+      },
+      subscriptionExpiresAt: {
+        type: "date",
+        required: false,
+        input: false,
+      },
+      businessName: {
+        type: "string",
+        required: false,
+        input: false,
+      },
     },
   },
-  trustedOrigins: [process.env.APP_URL ?? "http://localhost:3000"],
+  trustedOrigins,
 });
 
 /** Converts Express request headers into the `Headers` Better Auth expects. */

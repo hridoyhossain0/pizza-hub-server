@@ -6,8 +6,8 @@ import {
   idFilter,
   menuItemsCollection,
   transactionsCollection,
-  vendorProfilesCollection,
-  type VendorProfileDocument,
+  usersCollection,
+  type UserDocument,
 } from "./db.ts";
 
 const PREMIUM_PERIOD_DAYS = 30;
@@ -54,7 +54,7 @@ export function getPremiumPriceConfig(): PremiumPriceConfig {
   return { currency, unitAmount };
 }
 
-/** Idempotent indexes. The unique session index makes retries safe. */
+/** Idempotent indexes. The unique session index makes webhook retries safe. */
 export function ensurePaymentIndexes() {
   if (!indexPromise) {
     indexPromise = Promise.all([
@@ -68,7 +68,7 @@ export function ensurePaymentIndexes() {
           },
         },
       ),
-      vendorProfilesCollection.createIndex({ premiumExpiresAt: 1 }),
+      usersCollection.createIndex({ subscriptionExpiresAt: 1 }),
     ]).catch((error) => {
       indexPromise = null;
       throw error;
@@ -84,10 +84,10 @@ function addPremiumPeriod(from: Date, days = PREMIUM_PERIOD_DAYS) {
   return end;
 }
 
-function isExpired(profile: VendorProfileDocument, now: Date) {
+function isExpired(user: UserDocument, now: Date) {
   return Boolean(
-    profile.premiumExpiresAt &&
-      profile.premiumExpiresAt.getTime() <= now.getTime(),
+    user.subscriptionExpiresAt &&
+      user.subscriptionExpiresAt.getTime() <= now.getTime(),
   );
 }
 
@@ -95,26 +95,26 @@ function isExpired(profile: VendorProfileDocument, now: Date) {
 export async function expireVendorSubscription(
   userId: string,
   now = new Date(),
-): Promise<VendorProfileDocument | null> {
-  const profile = await vendorProfilesCollection.findOne({
-    userId: idFilter(userId),
+): Promise<UserDocument | null> {
+  const user = await usersCollection.findOne({
+    _id: idFilter(userId),
   });
 
-  if (!profile) {
+  if (!user) {
     return null;
   }
 
-  if (profile.subscriptionPlan !== "premium" || !isExpired(profile, now)) {
-    return profile;
+  if (user.subscriptionPlan !== "premium" || !isExpired(user, now)) {
+    return user;
   }
 
-  await vendorProfilesCollection.updateOne(
-    { userId: idFilter(userId), subscriptionPlan: "premium" },
+  await usersCollection.updateOne(
+    { _id: idFilter(userId), subscriptionPlan: "premium" },
     {
       $set: {
         subscriptionPlan: "free",
         subscriptionStatus: "expired",
-        premiumExpiresAt: null,
+        subscriptionExpiresAt: null,
         updatedAt: now,
       },
     },
@@ -126,10 +126,10 @@ export async function expireVendorSubscription(
   );
 
   return {
-    ...profile,
+    ...user,
     subscriptionPlan: "free",
     subscriptionStatus: "expired",
-    premiumExpiresAt: null,
+    subscriptionExpiresAt: null,
     updatedAt: now,
   };
 }
@@ -146,33 +146,33 @@ async function activateVendorPremium({
   stripeCustomerId?: string | null;
   now?: Date;
 }) {
-  const profile = await vendorProfilesCollection.findOne({
-    userId: idFilter(vendorId),
+  const user = await usersCollection.findOne({
+    _id: idFilter(vendorId),
   });
 
-  if (!profile) {
+  if (!user) {
     return null;
   }
 
   const base =
-    profile.subscriptionPlan === "premium" &&
-    profile.premiumExpiresAt &&
-    profile.premiumExpiresAt.getTime() > now.getTime()
-      ? profile.premiumExpiresAt
+    user.subscriptionPlan === "premium" &&
+    user.subscriptionExpiresAt &&
+    user.subscriptionExpiresAt.getTime() > now.getTime()
+      ? user.subscriptionExpiresAt
       : now;
 
-  const premiumExpiresAt = addPremiumPeriod(base);
+  const subscriptionExpiresAt = addPremiumPeriod(base);
 
-  await vendorProfilesCollection.updateOne(
-    { userId: idFilter(vendorId) },
+  await usersCollection.updateOne(
+    { _id: idFilter(vendorId) },
     {
       $set: {
         subscriptionPlan: "premium",
         subscriptionStatus: "active",
-        premiumSince: profile.premiumSince ?? now,
-        premiumExpiresAt,
+        premiumSince: user.premiumSince ?? now,
+        subscriptionExpiresAt,
         stripeCustomerId:
-          stripeCustomerId ?? profile.stripeCustomerId ?? null,
+          stripeCustomerId ?? user.stripeCustomerId ?? null,
         lastCheckoutSessionId: checkoutSessionId,
         updatedAt: now,
       },
@@ -184,7 +184,42 @@ async function activateVendorPremium({
     { $set: { premium: true, updatedAt: now } },
   );
 
-  return profile;
+  return user;
+}
+
+/** Cancels Premium at the end of the already-paid period. */
+async function schedulePremiumCancellation(vendorId: string) {
+  await usersCollection.updateOne(
+    { _id: idFilter(vendorId), subscriptionPlan: "premium" },
+    {
+      $set: {
+        subscriptionStatus: "cancelled",
+        updatedAt: new Date(),
+      },
+    },
+  );
+}
+
+/** Immediately revokes Premium (e.g. a cancelled Stripe subscription). */
+async function revokePremium(vendorId: string) {
+  const now = new Date();
+
+  await usersCollection.updateOne(
+    { _id: idFilter(vendorId) },
+    {
+      $set: {
+        subscriptionPlan: "free",
+        subscriptionStatus: "cancelled",
+        subscriptionExpiresAt: null,
+        updatedAt: now,
+      },
+    },
+  );
+
+  await menuItemsCollection.updateMany(
+    { vendorId: idFilter(vendorId) },
+    { $set: { premium: false, updatedAt: now } },
+  );
 }
 
 function paymentIntentId(session: Stripe.Checkout.Session) {
@@ -193,6 +228,14 @@ function paymentIntentId(session: Stripe.Checkout.Session) {
   }
 
   return session.payment_intent?.id ?? null;
+}
+
+function subscriptionId(session: Stripe.Checkout.Session) {
+  if (typeof session.subscription === "string") {
+    return session.subscription;
+  }
+
+  return session.subscription?.id ?? null;
 }
 
 function customerId(session: Stripe.Checkout.Session) {
@@ -230,9 +273,9 @@ export async function checkoutHandler(request: Request, response: Response) {
 
     // Lazy expiry lets an overdue vendor renew instead of being treated as
     // already Premium.
-    const profile = await expireVendorSubscription(auth.id);
+    const user = await expireVendorSubscription(auth.id);
 
-    if (!profile) {
+    if (!user?.businessName) {
       response.status(400).json({
         message:
           "Create your restaurant profile before upgrading your subscription.",
@@ -240,7 +283,7 @@ export async function checkoutHandler(request: Request, response: Response) {
       return;
     }
 
-    if (profile.subscriptionPlan === "premium") {
+    if (user.subscriptionPlan === "premium") {
       response
         .status(409)
         .json({ message: "Your subscription is already Premium." });
@@ -326,14 +369,15 @@ export async function checkoutHandler(request: Request, response: Response) {
       await transactionsCollection.insertOne({
         _id: new ObjectId(),
         vendorId: auth.id,
-        vendorName: profile.restaurantName,
+        vendorName: user.businessName,
         plan: "premium",
         amount: price.unitAmount / 100,
         currency: price.currency,
-        paymentStatus: "pending",
+        status: "pending",
         transactionDate: now,
         createdAt: now,
         stripeSessionId: checkout.id,
+        stripeSubscriptionId: null,
         stripePaymentIntentId: null,
       });
     } catch (error) {
@@ -355,10 +399,10 @@ export async function checkoutHandler(request: Request, response: Response) {
 
 async function markSessionFailed(sessionId: string) {
   await transactionsCollection.updateOne(
-    { stripeSessionId: sessionId, paymentStatus: "pending" },
+    { stripeSessionId: sessionId, status: "pending" },
     {
       $set: {
-        paymentStatus: "failed",
+        status: "failed",
         transactionDate: new Date(),
       },
     },
@@ -372,7 +416,7 @@ async function markSessionFailed(sessionId: string) {
  * guarantee that only a genuinely paid Stripe Checkout upgrades a vendor.
  */
 async function handleCheckoutPaid(session: Stripe.Checkout.Session) {
-  if (session.mode !== "payment" || session.payment_status !== "paid") {
+  if (session.payment_status !== "paid") {
     return;
   }
 
@@ -421,15 +465,15 @@ async function handleCheckoutPaid(session: Stripe.Checkout.Session) {
     stripeSessionId: session.id,
   });
 
-  if (existing?.paymentStatus === "paid") {
+  if (existing?.status === "paid") {
     return;
   }
 
-  const profile = await vendorProfilesCollection.findOne({
-    userId: idFilter(vendorId),
+  const user = await usersCollection.findOne({
+    _id: idFilter(vendorId),
   });
 
-  if (!profile) {
+  if (!user?.businessName) {
     console.error("Paid checkout for a missing vendor profile", vendorId);
     return;
   }
@@ -441,13 +485,14 @@ async function handleCheckoutPaid(session: Stripe.Checkout.Session) {
     {
       $set: {
         vendorId,
-        vendorName: profile.restaurantName,
+        vendorName: user.businessName,
         plan: "premium",
         amount: (session.amount_total ?? 0) / 100,
         currency: (session.currency ?? price.currency).toLowerCase(),
-        paymentStatus: "paid",
+        status: "paid",
         transactionDate: new Date(session.created * 1000),
         stripePaymentIntentId: paymentIntentId(session),
+        stripeSubscriptionId: subscriptionId(session),
       },
       $setOnInsert: {
         _id: new ObjectId(),
@@ -482,8 +527,8 @@ export async function webhookHandler(request: Request, response: Response) {
     return;
   }
 
-  if (!webhookSecret) {
-    console.error("STRIPE_WEBHOOK_SECRET is not configured.");
+  if (!webhookSecret || !webhookSecret.startsWith("whsec_")) {
+    console.error("STRIPE_WEBHOOK_SECRET is missing or invalid.");
     response.status(503).json({ message: "Stripe webhook is not configured." });
     return;
   }
@@ -541,15 +586,56 @@ export async function webhookHandler(request: Request, response: Response) {
         await transactionsCollection.updateOne(
           {
             stripePaymentIntentId: intent.id,
-            paymentStatus: "pending",
+            status: "pending",
           },
           {
             $set: {
-              paymentStatus: "failed",
+              status: "failed",
               transactionDate: new Date(),
             },
           },
         );
+        break;
+      }
+      case "customer.subscription.updated": {
+        const subscription = event.data.object as Stripe.Subscription;
+        const vendorId = subscription.metadata?.vendorId;
+
+        if (
+          typeof vendorId === "string" &&
+          (subscription.status === "canceled" ||
+            subscription.status === "unpaid")
+        ) {
+          await revokePremium(vendorId);
+        }
+        break;
+      }
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object as Stripe.Subscription;
+        const vendorId = subscription.metadata?.vendorId;
+
+        if (typeof vendorId === "string") {
+          await revokePremium(vendorId);
+        }
+        break;
+      }
+      case "invoice.payment_failed": {
+        // Stripe's Invoice type moved the subscription reference between API
+        // versions, so read both shapes defensively.
+        const invoice = event.data.object as unknown as {
+          subscription?: string | { id?: string } | null;
+        };
+        const subId =
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
+
+        if (subId) {
+          await transactionsCollection.updateOne(
+            { stripeSubscriptionId: subId, status: "pending" },
+            { $set: { status: "failed", transactionDate: new Date() } },
+          );
+        }
         break;
       }
       default:
@@ -562,4 +648,20 @@ export async function webhookHandler(request: Request, response: Response) {
   }
 
   response.json({ received: true });
+}
+
+/** Admin-only helper used by the "cancel" flow in the dashboard. */
+export async function cancelPremiumHandler(
+  request: Request,
+  response: Response,
+) {
+  const auth = request.auth;
+
+  if (!auth || auth.role !== "vendor") {
+    response.status(403).json({ message: "Only vendors can do this." });
+    return;
+  }
+
+  await schedulePremiumCancellation(auth.id);
+  response.json({ message: "Premium will end after the current period." });
 }

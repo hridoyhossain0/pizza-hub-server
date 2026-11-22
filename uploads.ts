@@ -1,8 +1,6 @@
 import type { Request, Response } from "express";
-import { ObjectId, Binary } from "mongodb";
 
 import { auth, toRequestHeaders } from "./auth.ts";
-import { imagesCollection } from "./db.ts";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
@@ -13,32 +11,76 @@ const ALLOWED_TYPES = new Set([
   "image/gif",
 ]);
 
-function publicApiUrl() {
-  return (
-    process.env.PUBLIC_API_URL?.trim() ||
-    `http://localhost:${process.env.PORT ?? 7000}`
-  ).replace(/\/$/, "");
+interface ImgbbResponse {
+  data?: {
+    url?: string;
+    display_url?: string;
+    thumb?: { url?: string };
+  };
+  success?: boolean;
+  error?: { message?: string };
 }
 
 function safeFilename(value: unknown) {
   if (typeof value !== "string") {
-    return "image";
+    return "pizza-hub-image";
   }
 
   return (
     value
+      .replace(/\.[A-Za-z0-9]+$/, "")
       .replace(/[^\w.\- ]+/g, "_")
       .replace(/\s+/g, "-")
-      .slice(0, 120) || "image"
+      .slice(0, 80) || "pizza-hub-image"
   );
+}
+
+/**
+ * Uploads a base64 payload to ImgBB and returns the public image URL.
+ * `IMGBB_API_KEY` lives only on the API server, never in the browser bundle.
+ */
+async function uploadToImgbb(base64: string, name: string) {
+  const apiKey = process.env.IMGBB_API_KEY?.trim();
+
+  if (!apiKey) {
+    throw new Error(
+      "Image hosting is not configured. Add IMGBB_API_KEY to the API server.",
+    );
+  }
+
+  const form = new FormData();
+  form.set("key", apiKey);
+  form.set("image", base64);
+  form.set("name", name);
+
+  const response = await fetch("https://api.imgbb.com/1/upload", {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(25000),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | ImgbbResponse
+    | null;
+
+  const url = payload?.data?.display_url ?? payload?.data?.url;
+
+  if (!response.ok || !payload?.success || !url) {
+    throw new Error(
+      payload?.error?.message ||
+        "ImgBB rejected the image upload. Please try another image.",
+    );
+  }
+
+  return url;
 }
 
 /**
  * POST /api/uploads
  *
- * Authenticated image upload used by menu items and profile pictures. The
- * image is stored in MongoDB (max 5MB) and served by GET /api/images/:id, so
- * the app no longer depends on an external image host or API key.
+ * Authenticated image upload used by menu items and profile pictures. The file
+ * is forwarded to ImgBB (max 5MB) and only the returned URL is persisted in
+ * MongoDB, so the database never stores binary image data.
  */
 export async function uploadImageHandler(
   request: Request,
@@ -54,7 +96,7 @@ export async function uploadImageHandler(
       return;
     }
 
-    if ((session.user as { blocked?: unknown }).blocked === true) {
+    if ((session.user as { isBlocked?: unknown }).isBlocked === true) {
       response
         .status(403)
         .json({ message: "Blocked accounts cannot upload images." });
@@ -102,56 +144,16 @@ export async function uploadImageHandler(
       return;
     }
 
-    const document = {
-      _id: new ObjectId(),
-      filename: safeFilename(body?.filename),
-      contentType,
-      size: buffer.length,
-      data: new Binary(buffer),
-      uploadedBy: session.user.id,
-      createdAt: new Date(),
-    };
+    const url = await uploadToImgbb(encoded, safeFilename(body?.filename));
 
-    await imagesCollection.insertOne(document);
-
-    response.status(201).json({
-      url: `${publicApiUrl()}/api/images/${document._id.toString()}`,
-    });
+    response.status(201).json({ url, provider: "imgbb" });
   } catch (error) {
     console.error("Image upload failed", error);
-    response
-      .status(500)
-      .json({ message: "The image could not be uploaded. Please try again." });
-  }
-}
-
-/** GET /api/images/:id — public so menu and profile images can render. */
-export async function imageHandler(request: Request, response: Response) {
-  const id = request.params.id;
-
-  if (typeof id !== "string" || !ObjectId.isValid(id)) {
-    response.status(404).json({ message: "Image not found." });
-    return;
-  }
-
-  try {
-    const image = await imagesCollection.findOne({
-      _id: new ObjectId(id),
+    response.status(502).json({
+      message:
+        error instanceof Error
+          ? error.message
+          : "The image could not be uploaded. Please try again.",
     });
-
-    if (!image) {
-      response.status(404).json({ message: "Image not found." });
-      return;
-    }
-
-    response.setHeader("Content-Type", image.contentType);
-    response.setHeader(
-      "Cache-Control",
-      "public, max-age=31536000, immutable",
-    );
-    response.send(Buffer.from(image.data.buffer));
-  } catch (error) {
-    console.error("Image lookup failed", error);
-    response.status(500).json({ message: "The image could not be loaded." });
   }
 }
