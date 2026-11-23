@@ -6,6 +6,7 @@ import express, {
 import cors from "cors";
 
 import { requireAuth, requireRole } from "./jwt.ts";
+import { ensureMongoConnection } from "./db.ts";
 import { listMenuHandler } from "./menu.ts";
 import { createOrderHandler, listOrdersHandler } from "./orders.ts";
 import {
@@ -73,6 +74,17 @@ app.get("/health", (_request: Request, response: Response) => {
 
 app.get("/api/health", (_request: Request, response: Response) => {
   response.json({ status: "ok" });
+});
+
+// Keep health checks DB-free, but make every data route reconnect after a
+// transient cold-start/network failure that closed the driver topology.
+app.use(async (_request: Request, _response: Response, next: NextFunction) => {
+  try {
+    await ensureMongoConnection();
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Public menu API with advanced search and price sorting (Challenge 1).

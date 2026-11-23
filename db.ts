@@ -127,3 +127,26 @@ export async function connectToMongoDB() {
   console.log("Connected to MongoDB.");
   return mongoClient;
 }
+
+/** True while the driver has an open topology. */
+function isMongoConnected() {
+  const topology = (
+    mongoClient as unknown as {
+      topology?: { isConnected?: () => boolean };
+    }
+  ).topology;
+
+  return topology?.isConnected?.() === true;
+}
+
+/**
+ * Reconnects only after a cold-start or network failure closed the topology.
+ * Calling `connect()` unconditionally would rebuild the topology on every
+ * request; calling it only when needed keeps warm requests cheap and lets a
+ * failed instance recover without a redeploy.
+ */
+export async function ensureMongoConnection() {
+  if (!isMongoConnected()) {
+    await connectToMongoDB();
+  }
+}
