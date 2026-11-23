@@ -2,10 +2,10 @@
   "name": "pizza-hub-server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "local-server.ts",
   "scripts": {
-    "dev": "node --watch index.ts",
-    "start": "node index.ts",
+    "dev": "node --watch local-server.ts",
+    "start": "node local-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

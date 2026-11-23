@@ -4,9 +4,7 @@ import express, {
   type Response,
 } from "express";
 import cors from "cors";
-import "dotenv/config";
 
-import { connectToMongoDB } from "./db.ts";
 import { requireAuth, requireRole } from "./jwt.ts";
 import { listMenuHandler } from "./menu.ts";
 import { createOrderHandler, listOrdersHandler } from "./orders.ts";
@@ -18,29 +16,22 @@ import {
 import { tokenHandler } from "./tokens.ts";
 import { uploadImageHandler } from "./uploads.ts";
 
-const app = express();
-
 /**
- * `APP_URL` may contain a comma-separated list so the API can accept the
- * stable production alias and any extra frontend domains at the same time.
+ * Express application shared by the local server (`index.ts`) and the Vercel
+ * serverless entry point (`api/[...route].ts`).
+ *
+ * Keeping the app separate from `app.listen` means the same code runs locally
+ * and as a serverless function without trying to bind a port in production.
  */
-function parseOrigins(value: string | undefined) {
-  return (value ?? "")
-    .split(",")
-    .map((origin) => origin.trim().replace(/\/$/, ""))
-    .filter(Boolean);
-}
+export const app = express();
+
+const frontendUrl = (
+  process.env.APP_URL?.trim() || "http://localhost:3000"
+).replace(/\/$/, "");
 
 const allowedOrigins = Array.from(
-  new Set([
-    ...parseOrigins(process.env.APP_URL),
-    ...parseOrigins(process.env.FRONTEND_URLS),
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-  ]),
+  new Set([frontendUrl, "http://localhost:3000", "http://127.0.0.1:3000"]),
 );
-
-const frontendUrl = allowedOrigins[0] ?? "http://localhost:3000";
 
 /**
  * Vercel preview and production hosts change between deployments, so hosts of
@@ -77,6 +68,10 @@ app.get("/", (_request: Request, response: Response) => {
 });
 
 app.get("/health", (_request: Request, response: Response) => {
+  response.json({ status: "ok" });
+});
+
+app.get("/api/health", (_request: Request, response: Response) => {
   response.json({ status: "ok" });
 });
 
@@ -152,17 +147,4 @@ app.use(
   },
 );
 
-// `PORT` is sometimes set to a full URL in Vercel project settings. Ignore
-// anything that is not a real port so the process never calls listen(NaN).
-const configuredPort = Number(process.env.PORT);
-const port =
-  Number.isInteger(configuredPort) && configuredPort > 0
-    ? configuredPort
-    : 7000;
-
-await connectToMongoDB();
-
-app.listen(port, () => {
-  console.log(`PizzaHub API listening on http://localhost:${port}`);
-  console.log(`CORS origin: ${frontendUrl}`);
-});
+export default app;
